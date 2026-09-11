@@ -26,7 +26,7 @@
 public Plugin:myinfo =
 {
     name        = "Class Warfare",
-    author      = "Tsunami,JonathanFlynn",
+    author      = "Tsunami,JonathanFlynn,Sound Fix by Phaiz",
     description = "Class Vs Class",
     version     = PL_VERSION,
     url         = "https://github.com/JonathanFlynn/Class-Warfare"
@@ -39,35 +39,12 @@ new Handle:g_hImmunity;
 new Handle:g_hClassVoteMenu 		= INVALID_HANDLE;
 //new Handle:g_hClassChangeInterval;
 new Float:g_hLimits[4][10];
-new String:g_sSounds[10][24] = {"", "vo/scout_no03.wav",   "vo/sniper_no04.wav", "vo/soldier_no01.wav",
-    "vo/demoman_no03.wav", "vo/medic_no03.wav",  "vo/heavy_no02.wav",
-    "vo/pyro_no01.wav",    "vo/spy_no02.wav",    "vo/engineer_no03.wav"};
+new String:g_sSounds[10][24] = {"", "vo/scout_no03.mp3",   "vo/sniper_no04.mp3", "vo/soldier_no01.mp3",
+    "vo/demoman_no03.mp3", "vo/medic_no03.mp3",  "vo/heavy_no02.mp3",
+    "vo/pyro_no01.mp3",    "vo/spy_no02.mp3",    "vo/engineer_no03.mp3"};
 
 static String:ClassNames[TFClassType][] = {"", "Scout", "Sniper", "Soldier", "Demoman", "Medic", "Heavy", "Pyro", "Spy", "Engineer" };
 
-enum e_PlayerInfo
-{
-    iBalanceTime,
-bool:bHasVoted,
-    iBlockTime,
-    iBlockWarnings,
-    iTeamPreference,
-    iTeamworkTime,
-bool:bIsVoteAdmin,
-    iBuddy,
-    iFrags,
-    iDeaths,
-bool:bHasFlag,
-    iSpecChangeTime,
-    iGameMe_Rank,
-    iGameMe_Skill,
-    iGameMe_gRank,
-    iGameMe_gSkill,
-    iGameMe_SkillChange,
-    iHlxCe_Rank,
-    iHlxCe_Skill,
-};
-new g_aPlayers[MAXPLAYERS + 1][e_PlayerInfo];
 new Handle:g_hVoteDelayTimer 		= INVALID_HANDLE;
 new bool:g_bVoteAllowed = true;
 
@@ -109,6 +86,12 @@ public OnPluginStart()
     // LogError("Random[%i] = %i", i, Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER));
     // }  
     
+}
+
+public OnMapStart()
+{
+    SetupClassRestrictions();
+
     decl i, String:sSound[32];
     for(i = 1; i < sizeof(g_sSounds); i++)
     {
@@ -116,10 +99,9 @@ public OnPluginStart()
         PrecacheSound(g_sSounds[i]);
         AddFileToDownloadsTable(sSound);
     }
-    
-    SetupClassRestrictions();
-    
 }
+
+    {
 
 public Action:Command_Say(client, args)
 {
@@ -261,7 +243,9 @@ public Event_PlayerClass(Handle:event, const String:name[], bool:dontBroadcast)
     {
         new iTeam   = GetClientTeam(iClient);
         //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red"); 
-        //EmitSoundToClient(iClient, g_sSounds[iClass]);
+        if (iClass > TF_CLASS_UNKNOWN && iClass <= TF_CLASS_ENGINEER) {
+            EmitSoundToClient(iClient, g_sSounds[iClass]);
+        }
         //TF2_SetPlayerClass(iClient, TFClassType:g_iClass[iClient]);
         
         if (iTeam == TF_TEAM_BLU) {        

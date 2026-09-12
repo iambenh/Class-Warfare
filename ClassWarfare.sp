@@ -36,8 +36,13 @@ new g_iClass[MAXPLAYERS + 1];
 new Handle:g_hEnabled;
 new Handle:g_hFlags;
 new Handle:g_hImmunity;
-new Handle:g_hClassVoteMenu 		= INVALID_HANDLE;
-//new Handle:g_hClassChangeInterval;
+new Handle:g_hClassChangeInterval;
+new Handle:g_hClassesPerTeam;
+new Handle:g_hVotePercent;
+
+new bool:g_bVotedReroll[MAXPLAYERS + 1];
+new g_iVotedMode[MAXPLAYERS + 1];
+new Handle:g_hClassChangeTimer 	= INVALID_HANDLE;
 new Float:g_hLimits[4][10];
 new String:g_sSounds[10][24] = {"", "vo/scout_no03.mp3",   "vo/sniper_no04.mp3", "vo/soldier_no01.mp3",
     "vo/demoman_no03.mp3", "vo/medic_no03.mp3",  "vo/heavy_no02.mp3",
@@ -54,19 +59,22 @@ new g_iRedClass1;
 new g_iBlueClass2;
 new g_iRedClass2;
 
+new g_iClassesThisRound = 1;
+
 
 
 new RandomizedThisRound = 0;
 
 public OnPluginStart()
 {
-    CreateConVar("sm_classwarfare_version", PL_VERSION, "Class Warfare in TF2.", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
-    
+    CreateConVar("sm_classwarfare_version", PL_VERSION, "Class Warfare in TF2.", FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
+
     g_hEnabled                                = CreateConVar("sm_classwarfare_enabled",       "1",  "Enable/disable the Class Warfare mod in TF2.");
     g_hFlags                                  = CreateConVar("sm_classwarfare_flags",         "",   "Admin flags for restricted classes in TF2.");
     g_hImmunity                               = CreateConVar("sm_classwarfare_immunity",      "0",  "Enable/disable admins being immune for restricted classes in TF2.");
-    //g_hClassChangeInterval                        = CreateConVar("sm_classwarfare_change_interval",   "0",  "Shuffle the classes every x minutes, 0 for round only");
-
+    g_hClassChangeInterval                    = CreateConVar("sm_classwarfare_change_interval",   "0",  "Shuffle the classes every x minutes, 0 for round only");
+    g_hClassesPerTeam                         = CreateConVar("sm_classwarfare_classes",       "1",  "Amount of classes per team (i.e 1v1, 2v2)", _, true, 1.0, true, 2.0);
+    g_hVotePercent                            = CreateConVar("sm_classwarfare_vote_percent",  "60", "Percent of players that must type a vote command for it to pass", _, true, 1.0, true, 100.0);
     HookEvent("player_changeclass", Event_PlayerClass);
     HookEvent("player_spawn",       Event_PlayerSpawn);
     HookEvent("player_team",        Event_PlayerTeam);
@@ -77,20 +85,34 @@ public OnPluginStart()
     HookEvent("teamplay_round_win",Event_RoundOver);
     
     RegConsoleCmd("say", Command_Say);
-    
+    RegConsoleCmd("sm_cw_reroll", Command_CwReroll, "Vote to reroll classes");
+    RegConsoleCmd("sm_cw_modevote", Command_ModeVote, "Vote to change class count per team");
+    RegConsoleCmd("sm_1v1", Command_Vote1v1, "Vote for 1v1 next round");
+    RegConsoleCmd("sm_2v2", Command_Vote2v2, "Vote for 2v2 next round");
+    RegAdminCmd("sm_cw_forcescramble", Command_Scramble, ADMFLAG_GENERIC, "Force scramble");
+    RegAdminCmd("sm_cw_setmode", Command_SetMode, ADMFLAG_GENERIC, "Set class count per team");
+
     new seeds[1];
     seeds[0] = GetTime();
     SetURandomSeed(seeds, 1);
 
     // for (new i = 0; i < 10; i++) {
     // LogError("Random[%i] = %i", i, Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER));
-    // }  
-    
+    // }
+
+}
+
+public OnMapEnd()
+{
+    g_hClassChangeTimer = INVALID_HANDLE;
+    g_hVoteDelayTimer = INVALID_HANDLE;
+    g_bVoteAllowed = true;
 }
 
 public OnMapStart()
 {
     SetupClassRestrictions();
+    RandomizedThisRound = 1;
 
     decl i, String:sSound[32];
     for(i = 1; i < sizeof(g_sSounds); i++)
@@ -101,7 +123,117 @@ public OnMapStart()
     }
 }
 
+public Action:Command_CwReroll(client, args)
+{
+    CastRerollVote(client);
+    return Plugin_Handled;
+}
+
+public Action:Command_Scramble(client, args)
+{
+    SetupClassRestrictions();
+    AssignPlayerClasses();
+    ShowActivity2(client, "\x04[SM]\x01 ", "scrambled the classes.");
+    PrintStatus();
+    return Plugin_Handled;
+}
+
+public Action:Command_SetMode(client, args)
+{
+    decl String:sArg[8];
+    GetCmdArg(1, sArg, sizeof(sArg));
+    new mode = StringToInt(sArg);
+    if (args < 1 || mode < 1 || mode > 2)
     {
+        ReplyToCommand(client, "\x01\x04[SM]\x01 Usage: sm_cw_setmode <1|2>");
+        return Plugin_Handled;
+    }
+    SetConVarInt(g_hClassesPerTeam, mode);
+    ShowActivity2(client, "\x04[SM]\x01 ", "set the class mode to %s.", mode == 2 ? "2v2" : "1v1");
+    return Plugin_Handled;
+}
+
+public Action:Command_ModeVote(client, args)
+{
+    CastModeVote(client, GetConVarInt(g_hClassesPerTeam) == 2 ? 1 : 2);
+    return Plugin_Handled;
+}
+
+public Action:Command_Vote1v1(client, args)
+{
+    CastModeVote(client, 1);
+    return Plugin_Handled;
+}
+
+public Action:Command_Vote2v2(client, args)
+{
+    CastModeVote(client, 2);
+    return Plugin_Handled;
+}
+
+CountVoters()
+{
+    new count = 0;
+    for (new i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && !IsFakeClient(i)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+VotesNeeded()
+{
+    new needed = RoundToCeil(float(CountVoters()) * GetConVarFloat(g_hVotePercent) / 100.0);
+    return needed < 1 ? 1 : needed;
+}
+
+CastModeVote(client, mode)
+{
+    if (!client || !IsClientInGame(client)) {
+        return;
+    }
+    if (GetConVarInt(g_hClassesPerTeam) == mode) {
+        ReplyToCommand(client, "\x01\x04[SM]\x01 Next round is already %s.", mode == 2 ? "2v2" : "1v1");
+        return;
+    }
+    if (g_iVotedMode[client] == mode) {
+        ReplyToCommand(client, "\x01\x04[SM]\x01 You already voted for %s.", mode == 2 ? "2v2" : "1v1");
+        return;
+    }
+    g_iVotedMode[client] = mode;
+
+    new votes = 0;
+    for (new i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && g_iVotedMode[i] == mode) {
+            votes++;
+        }
+    }
+    new needed = VotesNeeded();
+
+    PrintToChatAll("\x01\x04[SM]\x01 %N wants %s next round (%d/%d votes, type !%s)", client, mode == 2 ? "2v2" : "1v1", votes, needed, mode == 2 ? "2v2" : "1v1");
+
+    if (votes >= needed) {
+        SetConVarInt(g_hClassesPerTeam, mode);
+        ResetModeVotes();
+        PrintCenterTextAll("Vote Passed. Next round will be %s.", mode == 2 ? "2v2" : "1v1");
+        PrintToChatAll("\x01\x04[SM]\x01 Vote Passed. Next round will be %s.", mode == 2 ? "2v2" : "1v1");
+    }
+}
+
+ResetModeVotes()
+{
+    for (new i = 0; i <= MaxClients; i++) {
+        g_iVotedMode[i] = 0;
+    }
+}
+
+ResetRerollVotes()
+{
+    for (new i = 0; i <= MaxClients; i++) {
+        g_bVotedReroll[i] = false;
+    }
+}
 
 public Action:Command_Say(client, args)
 {
@@ -125,69 +257,51 @@ public Action:Command_Say(client, args)
 
     if (strcmp(text[startidx], "nextclass", false) == 0)
     {
-        if (!g_bVoteAllowed)
-        {
-            ReplyToCommand(client, "\x01\x04[SM]\x01 %s", "You must wait before voting again.");
-        }	else {
-            StartClassVote();
-        } 
+        CastRerollVote(client);
     }
-    
-    return Plugin_Continue;	
+
+    return Plugin_Continue;
 }
 
-StartClassVote(time=30)
+CastRerollVote(client)
 {
-    if (IsVoteInProgress())
-    {
-        PrintToChatAll("\x01\x04[SM]\x01 %s", "VoteWillStart");
+    if (!client || !IsClientInGame(client)) {
         return;
-    } 
-    
-    DelayPublicVoteTriggering();
-    g_hClassVoteMenu = CreateMenu(Handler_VoteCallback, MenuAction:MENU_ACTIONS_ALL);
-    
-    new String:sTmpTitle[64];
-    Format(sTmpTitle, 64, "Randomize Classes Again?");
-    
-    SetMenuTitle(g_hClassVoteMenu, sTmpTitle);
-    AddMenuItem(g_hClassVoteMenu, "1", "Yes");
-    AddMenuItem(g_hClassVoteMenu, "2", "No");
-    SetMenuExitButton(g_hClassVoteMenu, false);
-    VoteMenuToAll(g_hClassVoteMenu, time);
-}
-
-
-public Handler_VoteCallback(Handle:menu, MenuAction:action, param1, param2)
-{
-    DelayPublicVoteTriggering();
-    if (action == MenuAction_End)
+    }
+    if (!g_bVoteAllowed)
     {
-        CloseHandle(menu);
-    } else if (action == MenuAction_VoteEnd) {
-        /* 0=yes, 1=no */
-        if (param1 == 1)
-        {
-            PrintCenterTextAll("%s", "Vote Failed, keeping current matchup." );
-            PrintToChatAll("%s", "Vote Failed, keeping current matchup." ); 
-             
-        }
-        else {
-            SetupClassRestrictions();
-            AssignBotClasses(); //Let players keep the current class until they die
-            PrintCenterTextAll("%s", "Vote Passed." );
-            PrintToChatAll("%s", "Vote Passed."  ); 
-            PrintStatus();
+        ReplyToCommand(client, "\x01\x04[SM]\x01 %s", "The classes were just changed, wait a bit before voting again.");
+        return;
+    }
+    if (g_bVotedReroll[client]) {
+        ReplyToCommand(client, "\x01\x04[SM]\x01 You already voted to reroll.");
+        return;
+    }
+    g_bVotedReroll[client] = true;
+
+    new votes = 0;
+    for (new i = 1; i <= MaxClients; i++) {
+        if (IsClientInGame(i) && g_bVotedReroll[i]) {
+            votes++;
         }
     }
+    new needed = VotesNeeded();
 
+    PrintToChatAll("\x01\x04[SM]\x01 %N wants to reroll the classes (%d/%d votes, type !cw_reroll)", client, votes, needed);
+
+    if (votes >= needed) {
+        DelayPublicVoteTriggering(true);
+        SetupClassRestrictions();
+        AssignBotClasses(); //Let players keep the current class until they die
+        PrintCenterTextAll("%s", "Vote Passed." );
+        PrintToChatAll("\x01\x04[SM]\x01 %s", "Vote Passed."  );
+        PrintStatus();
+    }
 }
 
 DelayPublicVoteTriggering(bool:success = false)  // success means a vote happened... longer delay
 {
-    for (new i = 0; i <= MaxClients; i++)	
-    g_aPlayers[i][bHasVoted] = false;
-    
+    ResetRerollVotes();
     g_bVoteAllowed = false;
     if (g_hVoteDelayTimer != INVALID_HANDLE)
     {
@@ -229,6 +343,8 @@ public Event_RoundOver(Handle:event, const String:name[], bool:dontBroadcast) {
 public OnClientPutInServer(client)
 {
     g_iClass[client] = TF_CLASS_UNKNOWN;
+    g_bVotedReroll[client] = false;
+    g_iVotedMode[client] = 0;
 }
 
 public Event_PlayerClass(Handle:event, const String:name[], bool:dontBroadcast)
@@ -242,20 +358,16 @@ public Event_PlayerClass(Handle:event, const String:name[], bool:dontBroadcast)
     if(!IsValidClass(iClient, iClass))
     {
         new iTeam   = GetClientTeam(iClient);
-        //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red"); 
+        //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red");
         if (iClass > TF_CLASS_UNKNOWN && iClass <= TF_CLASS_ENGINEER) {
             EmitSoundToClient(iClient, g_sSounds[iClass]);
         }
         //TF2_SetPlayerClass(iClient, TFClassType:g_iClass[iClient]);
-        
-        if (iTeam == TF_TEAM_BLU) {        
-        PrintCenterText(iClient, "%s%s%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", ClassNames[g_iBlueClass1], " or ", ClassNames[g_iBlueClass2] );   
-        PrintToChat(iClient, "%s%s%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", ClassNames[g_iBlueClass1], " or ", ClassNames[g_iBlueClass2]);
-        }
-        else {
-        PrintCenterText(iClient, "%s%s%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", ClassNames[g_iRedClass1], " or ", ClassNames[g_iRedClass2] );   
-        PrintToChat(iClient, "%s%s%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", ClassNames[g_iRedClass1], " or ", ClassNames[g_iRedClass1]);
-        }
+
+        decl String:sTeamClasses[32];
+        TeamClassString(iTeam, sTeamClasses, sizeof(sTeamClasses));
+        PrintCenterText(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses );
+        PrintToChat(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses);
 
         AssignValidClass(iClient);
     }    
@@ -264,7 +376,6 @@ public Event_PlayerClass(Handle:event, const String:name[], bool:dontBroadcast)
 
 public Action:Event_RoundStart(Handle:event, const String:name[], bool:dontBroadcast)
 {
-    PrintToChatAll("%s", "Regular Round Start Event");
     RoundClassRestrictions();
     PrintStatus();
 } 
@@ -349,8 +460,21 @@ PrintStatus() {
     if(!GetConVarBool(g_hEnabled))
     return;
     
-    PrintCenterTextAll("%s%s%s%s%s%s%s%s", "This is Class Warfare: Red ", ClassNames[g_iRedClass1], " and ", ClassNames[g_iRedClass2], " vs Blue ", ClassNames[g_iBlueClass1], " and ", ClassNames[g_iBlueClass2] );
-    PrintToChatAll("%s%s%s%s%s%s%s%s", "This is Class Warfare: Red ", ClassNames[g_iRedClass1], " and ", ClassNames[g_iRedClass2], " vs Blue ", ClassNames[g_iBlueClass1], " and ", ClassNames[g_iBlueClass2] );
+    decl String:sRed[32], String:sBlue[32];
+    TeamClassString(TF_TEAM_RED, sRed, sizeof(sRed));
+    TeamClassString(TF_TEAM_BLU, sBlue, sizeof(sBlue));
+    PrintCenterTextAll("%s%s%s%s", "This is Class Warfare: Red ", sRed, " vs Blue ", sBlue );
+    PrintToChatAll("%s%s%s%s", "This is Class Warfare: Red ", sRed, " vs Blue ", sBlue );
+}
+
+TeamClassString(iTeam, String:buffer[], maxlen) {
+    new iClass1 = (iTeam == TF_TEAM_BLU) ? g_iBlueClass1 : g_iRedClass1;
+    new iClass2 = (iTeam == TF_TEAM_BLU) ? g_iBlueClass2 : g_iRedClass2;
+    if (g_iClassesThisRound == 2 && iClass1 != iClass2) {
+        Format(buffer, maxlen, "%s and %s", ClassNames[iClass1], ClassNames[iClass2]);
+    } else {
+        Format(buffer, maxlen, "%s", ClassNames[iClass1]);
+    }
 }
 bool:IsImmune(iClient)
 {
@@ -385,6 +509,8 @@ AssignBotClasses() {
 RoundClassRestrictions() {
     if ( RandomizedThisRound == 0) {
         SetupClassRestrictions();
+        ResetRerollVotes();
+        ResetModeVotes();
     } 
     RandomizedThisRound = 1;
     AssignPlayerClasses();
@@ -399,34 +525,48 @@ SetupClassRestrictions() {
     }
     
  
+    g_iClassesThisRound = GetConVarInt(g_hClassesPerTeam);
+
     g_iBlueClass1 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
     g_iRedClass1 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    
-    g_iBlueClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    g_iRedClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    
-    g_hLimits[TF_TEAM_BLU][g_iBlueClass1] = -1.0;
-    g_hLimits[TF_TEAM_RED][g_iRedClass1] = -1.0; 
-    
-    g_hLimits[TF_TEAM_BLU][g_iBlueClass2] = -1.0;
-    g_hLimits[TF_TEAM_RED][g_iRedClass2] = -1.0; 
 
-    // new seconds = GetConVarInt(g_hClassChangeInterval) * 60;
-    // if (seconds > 0) { 
-        // CreateTimer(float(seconds), TimerClassChange);
-    // }
-    
-    //rewrite this later
-    if ((g_iBlueClass1 == g_iBlueClass2) || (g_iRedClass1 == g_iRedClass2)) {
-    SetupClassRestrictions();
+    if (g_iClassesThisRound == 2) {
+        do {
+            g_iBlueClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+        } while (g_iBlueClass2 == g_iBlueClass1);
+        do {
+            g_iRedClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+        } while (g_iRedClass2 == g_iRedClass1);
+    } else {
+        g_iBlueClass2 = g_iBlueClass1;
+        g_iRedClass2 = g_iRedClass1;
     }
-    
+
+    g_hLimits[TF_TEAM_BLU][g_iBlueClass1] = -1.0;
+    g_hLimits[TF_TEAM_RED][g_iRedClass1] = -1.0;
+
+    g_hLimits[TF_TEAM_BLU][g_iBlueClass2] = -1.0;
+    g_hLimits[TF_TEAM_RED][g_iRedClass2] = -1.0;
+
+    if (g_hClassChangeTimer != INVALID_HANDLE) {
+        KillTimer(g_hClassChangeTimer);
+        g_hClassChangeTimer = INVALID_HANDLE;
+    }
+    new seconds = GetConVarInt(g_hClassChangeInterval) * 60;
+    if (seconds > 0) {
+        g_hClassChangeTimer = CreateTimer(float(seconds), TimerClassChange, _, TIMER_FLAG_NO_MAPCHANGE);
+    }
+
 }
 
 public Action:TimerClassChange(Handle:timer, any:client)
 {
+    g_hClassChangeTimer = INVALID_HANDLE;
     SetupClassRestrictions();
-    PrintToChatAll("%s%s%s%s%s%s%s%s", "Mid Round Class Change:Red ", ClassNames[g_iRedClass1], " and ", ClassNames[g_iRedClass2], " vs Blue ", ClassNames[g_iBlueClass1], " and ", ClassNames[g_iBlueClass1] );
+    AssignPlayerClasses();
+    PrintToChatAll("%s", "Mid Round Class Change!");
+    PrintStatus();
+    return Plugin_Stop;
 }
 
 /* AssignValidClass(iClient)

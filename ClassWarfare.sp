@@ -3,7 +3,7 @@
 #include <sourcemod>
 #include <tf2_stocks>
 
-#define PL_VERSION "0.2"
+#define PL_VERSION "0.3"
 
 #define TF_CLASS_DEMOMAN		4
 #define TF_CLASS_ENGINEER		9
@@ -26,10 +26,10 @@
 public Plugin:myinfo =
 {
     name        = "Class Warfare",
-    author      = "Tsunami,JonathanFlynn,Sound Fix by Phaiz",
+    author      = "Tsunami,JonathanFlynn,Sound Fix by Phaiz, fixes by dumb dog",
     description = "Class Vs Class",
     version     = PL_VERSION,
-    url         = "https://github.com/JonathanFlynn/Class-Warfare"
+    url         = "https://github.com/iambenh/Class-Warfare"
 }
 
 new g_iClass[MAXPLAYERS + 1];

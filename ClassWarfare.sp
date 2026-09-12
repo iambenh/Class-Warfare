@@ -85,13 +85,13 @@ public OnPluginStart()
 
     HookEvent("player_changeclass", Event_PlayerClass);
     HookEvent("player_spawn",       Event_PlayerSpawn);
-    HookEvent("player_team",        Event_PlayerTeam);
     
     HookEvent("teamplay_round_start", Event_RoundStart);
     HookEvent("teamplay_setup_finished",Event_SetupFinished);
     
     HookEvent("teamplay_round_win",Event_RoundOver);
-    
+
+    AddCommandListener(Command_JoinClass, "joinclass");
     RegConsoleCmd("say", Command_Say);
     RegConsoleCmd("sm_cw_reroll", Command_CwReroll, "Vote to reroll classes");
     RegConsoleCmd("sm_cw_modevote", Command_ModeVote, "Vote to change class count per team");
@@ -108,6 +108,13 @@ public OnPluginStart()
     // LogError("Random[%i] = %i", i, Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER));
     // }
 
+}
+
+// bots really do not like being forced into a class so try killing themselves
+// to avoid it. bypasses normal methods so we need to do this ugliness instead
+public OnConfigsExecuted()
+{
+    SetConVarBool(FindConVar("tf_bot_reevaluate_class_in_spawnroom"), false);
 }
 
 public OnMapEnd()
@@ -320,7 +327,7 @@ DelayPublicVoteTriggering(bool:success = false)  // success means a vote happene
     if (success) {
         fDelay = fDelay * 2.0;
     }
-    g_hVoteDelayTimer = CreateTimer(fDelay, TimerEnable, TIMER_FLAG_NO_MAPCHANGE);
+    g_hVoteDelayTimer = CreateTimer(fDelay, TimerEnable, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public Action:TimerEnable(Handle:timer)
@@ -362,23 +369,47 @@ public Event_PlayerClass(Handle:event, const String:name[], bool:dontBroadcast)
     
     new iClient = GetClientOfUserId(GetEventInt(event, "userid")),
     iClass  = GetEventInt(event, "class");
-    
-    if(!IsValidClass(iClient, iClass))
+
+    if(iClient && !IsValidClass(iClient, iClass))
     {
-        new iTeam   = GetClientTeam(iClient);
-        //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red");
-        if (iClass > TF_CLASS_UNKNOWN && iClass <= TF_CLASS_ENGINEER) {
-            EmitSoundToClient(iClient, g_sSounds[iClass]);
+        WarnInvalidClass(iClient, iClass);
+
+        new iCurrent = _:TF2_GetPlayerClass(iClient);
+        if (iCurrent == TF_CLASS_UNKNOWN || !IsValidClass(iClient, iCurrent)) {
+            iCurrent = RandomValidClass(GetClientTeam(iClient));
         }
-        //TF2_SetPlayerClass(iClient, TFClassType:g_iClass[iClient]);
+        SetEntProp(iClient, Prop_Send, "m_iDesiredPlayerClass", iCurrent);
+    }
+}
 
-        decl String:sTeamClasses[32];
-        TeamClassString(iTeam, sTeamClasses, sizeof(sTeamClasses));
-        PrintCenterText(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses );
-        PrintToChat(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses);
+public Action:Command_JoinClass(client, const String:command[], argc)
+{
+    if (!client || !IsPlayerAlive(client)) {
+        return Plugin_Continue;
+    }
 
-        AssignValidClass(iClient);
-    }    
+    decl String:sClass[32];
+    GetCmdArg(1, sClass, sizeof(sClass));
+    new iClass = _:TF2_GetClass(sClass);
+
+    if (iClass == TF_CLASS_UNKNOWN || IsValidClass(client, iClass)) {
+        return Plugin_Continue;
+    }
+
+    WarnInvalidClass(client, iClass);
+    return Plugin_Handled;
+}
+
+WarnInvalidClass(iClient, iClass)
+{
+    if (iClass > TF_CLASS_UNKNOWN && iClass <= TF_CLASS_ENGINEER) {
+        EmitSoundToClient(iClient, g_sSounds[iClass]);
+    }
+
+    decl String:sTeamClasses[32];
+    TeamClassString(GetClientTeam(iClient), sTeamClasses, sizeof(sTeamClasses));
+    PrintCenterText(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses );
+    PrintToChat(iClient, "%s%s%s", ClassNames[iClass],  " Is Not An Option This Round! You must pick ", sTeamClasses);
 }
 
 
@@ -395,27 +426,17 @@ public Action:Event_SetupFinished(Handle:event,  const String:name[], bool:dontB
 
 public Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
 {
-    new iClient = GetClientOfUserId(GetEventInt(event, "userid"));  
-    g_iClass[iClient] = _:TF2_GetPlayerClass(iClient);
-    
-    if(!IsValidClass(iClient,g_iClass[iClient]))
-    {   //new iTeam   = GetClientTeam(iClient);       
-        //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red");
-        //EmitSoundToClient(iClient, g_sSounds[g_iClass[iClient]]);
-        
-        AssignValidClass(iClient);
-    }
-}
-
-public Event_PlayerTeam(Handle:event,  const String:name[], bool:dontBroadcast)
-{   
     new iClient = GetClientOfUserId(GetEventInt(event, "userid"));
-    
+    if (!iClient) {
+        return;
+    }
+    g_iClass[iClient] = _:TF2_GetPlayerClass(iClient);
+
     if(!IsValidClass(iClient,g_iClass[iClient]))
-    {
-        //new iTeam   = GetClientTeam(iClient);
+    {   //new iTeam   = GetClientTeam(iClient);
         //ShowVGUIPanel(iClient, iTeam == TF_TEAM_BLU ? "class_blue" : "class_red");
         //EmitSoundToClient(iClient, g_sSounds[g_iClass[iClient]]);
+
         AssignValidClass(iClient);
     }
 }
@@ -596,6 +617,9 @@ SetupClassRestrictions() {
 public Action:TimerClassChange(Handle:timer, any:client)
 {
     g_hClassChangeTimer = INVALID_HANDLE;
+    if (!GetConVarBool(g_hEnabled)) {
+        return Plugin_Stop;
+    }
     SetupClassRestrictions();
     ApplyReroll();
     PrintToChatAll("%s", "Mid Round Class Change!");
@@ -628,23 +652,24 @@ public Action:TimerClassChange(Handle:timer, any:client)
     }
 } */
 
+RandomValidClass(iTeam)
+{
+    new i;
+    do {
+        i = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+    } while (IsFull(iTeam, i));
+    return i;
+}
+
 AssignValidClass(iClient)
 {
-    
-    new i = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    new iTeam = GetClientTeam(iClient);
-    
-    while (IsFull(iTeam, i)) {
-    i = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    }
+    new i = RandomValidClass(GetClientTeam(iClient));
     g_iClass[iClient] = i;
-    
+
     TF2_SetPlayerClass(iClient, TFClassType:i);
-    TF2_RegeneratePlayer(iClient);  
-    if (!IsPlayerAlive(iClient)) {
-        TF2_RespawnPlayer(iClient);
+    if (IsPlayerAlive(iClient)) {
+        TF2_RegeneratePlayer(iClient);
     }
-  
 }
 
 

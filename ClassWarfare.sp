@@ -308,8 +308,7 @@ CastRerollVote(client)
         DelayPublicVoteTriggering(true);
         SetupClassRestrictions();
         ApplyReroll();
-        PrintCenterTextAll("%s", "Vote Passed." );
-        PrintToChatAll("\x01\x04[SM]\x01 %s", "Vote Passed."  );
+        PrintToChatAll("\x01\x04[SM]\x01 %s", GetConVarBool(g_hRerollImmediate) ? "Vote Passed. Classes have been changed!" : "Vote Passed. You will change class on next respawn."  );
         PrintStatus();
     }
 }

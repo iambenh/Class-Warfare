@@ -81,6 +81,8 @@ public OnPluginStart()
     g_hRerollImmediate                        = CreateConVar("sm_classwarfare_reroll_immediate", "0", "Whether rerolls take place imediately", _, true, 0.0, true, 1.0);
     g_hBlacklist1v1                           = CreateConVar("sm_classwarfare_blacklist_1v1", "",   "Classes banned in 1v1");
     g_hBlacklist2v2                           = CreateConVar("sm_classwarfare_blacklist_2v2", "",   "Classes banned in 2v2");
+    AutoExecConfig(true, "classwarfare");
+
     HookEvent("player_changeclass", Event_PlayerClass);
     HookEvent("player_spawn",       Event_PlayerSpawn);
     HookEvent("player_team",        Event_PlayerTeam);

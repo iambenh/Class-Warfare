@@ -40,6 +40,8 @@ new Handle:g_hClassChangeInterval;
 new Handle:g_hClassesPerTeam;
 new Handle:g_hVotePercent;
 new Handle:g_hRerollImmediate;
+new Handle:g_hBlacklist1v1;
+new Handle:g_hBlacklist2v2;
 
 new bool:g_bVotedReroll[MAXPLAYERS + 1];
 new g_iVotedMode[MAXPLAYERS + 1];
@@ -77,6 +79,8 @@ public OnPluginStart()
     g_hClassesPerTeam                         = CreateConVar("sm_classwarfare_classes",       "1",  "Amount of classes per team (i.e 1v1, 2v2)", _, true, 1.0, true, 2.0);
     g_hVotePercent                            = CreateConVar("sm_classwarfare_vote_percent",  "60", "Percent of players that must type a vote command for it to pass", _, true, 1.0, true, 100.0);
     g_hRerollImmediate                        = CreateConVar("sm_classwarfare_reroll_immediate", "0", "Whether rerolls take place imediately", _, true, 0.0, true, 1.0);
+    g_hBlacklist1v1                           = CreateConVar("sm_classwarfare_blacklist_1v1", "",   "Classes banned in 1v1");
+    g_hBlacklist2v2                           = CreateConVar("sm_classwarfare_blacklist_2v2", "",   "Classes banned in 2v2");
     HookEvent("player_changeclass", Event_PlayerClass);
     HookEvent("player_spawn",       Event_PlayerSpawn);
     HookEvent("player_team",        Event_PlayerTeam);
@@ -536,8 +540,20 @@ AssignBotClasses() {
     }
 }
 
+RandomAllowedClass(exclude = TF_CLASS_UNKNOWN)
+{
+    decl String:sBlacklist[128];
+    GetConVarString(g_iClassesThisRound == 2 ? g_hBlacklist2v2 : g_hBlacklist1v1, sBlacklist, sizeof(sBlacklist));
+
+    new iClass, tries = 0;
+    do {
+        iClass = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+    } while (iClass == exclude || (tries++ < 100 && StrContains(sBlacklist, ClassNames[iClass], false) != -1));
+    return iClass;
+}
+
 SetupClassRestrictions() {
-    
+
     for(new i = TF_CLASS_SCOUT; i <= TF_CLASS_ENGINEER; i++)
     {
         g_hLimits[TF_TEAM_BLU][i] = 0.0;
@@ -547,16 +563,12 @@ SetupClassRestrictions() {
  
     g_iClassesThisRound = GetConVarInt(g_hClassesPerTeam);
 
-    g_iBlueClass1 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    g_iRedClass1 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+    g_iBlueClass1 = RandomAllowedClass();
+    g_iRedClass1 = RandomAllowedClass();
 
     if (g_iClassesThisRound == 2) {
-        do {
-            g_iBlueClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-        } while (g_iBlueClass2 == g_iBlueClass1);
-        do {
-            g_iRedClass2 = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-        } while (g_iRedClass2 == g_iRedClass1);
+        g_iBlueClass2 = RandomAllowedClass(g_iBlueClass1);
+        g_iRedClass2 = RandomAllowedClass(g_iRedClass1);
     } else {
         g_iBlueClass2 = g_iBlueClass1;
         g_iRedClass2 = g_iRedClass1;

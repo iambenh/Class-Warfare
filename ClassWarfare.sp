@@ -43,6 +43,7 @@ new Handle:g_hRerollImmediate;
 new Handle:g_hBlacklist1v1;
 new Handle:g_hBlacklist2v2;
 new Handle:g_hBannedPairs;
+new Handle:g_hAvoidRepeats;
 
 new bool:g_bVotedReroll[MAXPLAYERS + 1];
 new g_iVotedMode[MAXPLAYERS + 1];
@@ -83,6 +84,7 @@ public OnPluginStart()
     g_hBlacklist1v1                           = CreateConVar("sm_classwarfare_blacklist_1v1", "",   "Classes banned in 1v1");
     g_hBlacklist2v2                           = CreateConVar("sm_classwarfare_blacklist_2v2", "",   "Classes banned in 2v2");
     g_hBannedPairs                            = CreateConVar("sm_classwarfare_banned_pairs",  "",   "Banned pairings, for example \"Engineer:Spy,Medic:Soldier\"");
+    g_hAvoidRepeats                           = CreateConVar("sm_classwarfare_avoid_repeats", "2",  "Avoid repeating classes. 1 = a team can't get its own previous class, 2 = neither team can get any class either team had", _, true, 0.0, true, 2.0);
     AutoExecConfig(true, "classwarfare");
 
     HookEvent("player_changeclass", Event_PlayerClass);
@@ -577,8 +579,17 @@ RandomAllowedClass(iTeam, exclude = TF_CLASS_UNKNOWN, opponent1 = TF_CLASS_UNKNO
     } while (iClass == exclude
         || (tries < 100 && StrContains(sBlacklist, ClassNames[iClass], false) != -1)
         || (tries < 100 && (IsBannedPair(sPairs, iClass, opponent1) || IsBannedPair(sPairs, iClass, opponent2)))
-        || (tries < 50 && g_hLimits[iTeam][iClass] < 0.0));
+        || (tries < 50 && WasRolledLastTime(iTeam, iClass)));
     return iClass;
+}
+
+bool:WasRolledLastTime(iTeam, iClass)
+{
+    switch (GetConVarInt(g_hAvoidRepeats)) {
+        case 1: return g_hLimits[iTeam][iClass] < 0.0;
+        case 2: return g_hLimits[TF_TEAM_RED][iClass] < 0.0 || g_hLimits[TF_TEAM_BLU][iClass] < 0.0;
+    }
+    return false;
 }
 
 bool:IsBannedPair(const String:sPairs[], iClassA, iClassB)

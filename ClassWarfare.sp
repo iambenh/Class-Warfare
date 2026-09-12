@@ -39,6 +39,7 @@ new Handle:g_hImmunity;
 new Handle:g_hClassChangeInterval;
 new Handle:g_hClassesPerTeam;
 new Handle:g_hVotePercent;
+new Handle:g_hRerollImmediate;
 
 new bool:g_bVotedReroll[MAXPLAYERS + 1];
 new g_iVotedMode[MAXPLAYERS + 1];
@@ -75,6 +76,7 @@ public OnPluginStart()
     g_hClassChangeInterval                    = CreateConVar("sm_classwarfare_change_interval",   "0",  "Shuffle the classes every x minutes, 0 for round only");
     g_hClassesPerTeam                         = CreateConVar("sm_classwarfare_classes",       "1",  "Amount of classes per team (i.e 1v1, 2v2)", _, true, 1.0, true, 2.0);
     g_hVotePercent                            = CreateConVar("sm_classwarfare_vote_percent",  "60", "Percent of players that must type a vote command for it to pass", _, true, 1.0, true, 100.0);
+    g_hRerollImmediate                        = CreateConVar("sm_classwarfare_reroll_immediate", "0", "Whether rerolls take place imediately", _, true, 0.0, true, 1.0);
     HookEvent("player_changeclass", Event_PlayerClass);
     HookEvent("player_spawn",       Event_PlayerSpawn);
     HookEvent("player_team",        Event_PlayerTeam);
@@ -132,7 +134,7 @@ public Action:Command_CwReroll(client, args)
 public Action:Command_Scramble(client, args)
 {
     SetupClassRestrictions();
-    AssignPlayerClasses();
+    ApplyReroll();
     ShowActivity2(client, "\x04[SM]\x01 ", "scrambled the classes.");
     PrintStatus();
     return Plugin_Handled;
@@ -292,7 +294,7 @@ CastRerollVote(client)
     if (votes >= needed) {
         DelayPublicVoteTriggering(true);
         SetupClassRestrictions();
-        AssignBotClasses(); //Let players keep the current class until they die
+        ApplyReroll();
         PrintCenterTextAll("%s", "Vote Passed." );
         PrintToChatAll("\x01\x04[SM]\x01 %s", "Vote Passed."  );
         PrintStatus();
@@ -489,21 +491,19 @@ bool:IsImmune(iClient)
 }
 
 AssignPlayerClasses() {
-    for (new i = 1; i <= MaxClients; ++i) {            
-        if (IsClientConnected(i) && (!IsValidClass(i,g_iClass[i]))) {
-            AssignValidClass(i);     
+    for (new i = 1; i <= MaxClients; ++i) {
+        if (IsClientInGame(i) && GetClientTeam(i) >= TF_TEAM_RED) {
+            g_iClass[i] = _:TF2_GetPlayerClass(i);
+            if (!IsValidClass(i, g_iClass[i])) {
+                AssignValidClass(i);
+                if (IsFakeClient(i)) {
+                    TF2_RespawnPlayer(i); //If bots don't respawn, they seem to get stuck sometimes?
+                }
+            }
         }
     }
 }
 
-AssignBotClasses() {
-    for (new i = 1; i <= MaxClients; ++i) {            
-        if (IsClientConnected(i) && (!IsValidClass(i,g_iClass[i])) && IsFakeClient(i)) {
-            AssignValidClass(i);     
-            TF2_RespawnPlayer(i); //If bots don't respawn, they seem to get stuck sometimes?
-        }
-    }
-}
 
 // Run once per real round (event fires multiple times)
 RoundClassRestrictions() {
@@ -514,6 +514,26 @@ RoundClassRestrictions() {
     } 
     RandomizedThisRound = 1;
     AssignPlayerClasses();
+}
+
+ApplyReroll() {
+    if (GetConVarBool(g_hRerollImmediate)) {
+        AssignPlayerClasses();
+    } else {
+        AssignBotClasses();
+    }
+}
+
+AssignBotClasses() {
+    for (new i = 1; i <= MaxClients; ++i) {
+        if (IsClientInGame(i) && IsFakeClient(i) && GetClientTeam(i) >= TF_TEAM_RED) {
+            g_iClass[i] = _:TF2_GetPlayerClass(i);
+            if (!IsValidClass(i, g_iClass[i])) {
+                AssignValidClass(i);
+                TF2_RespawnPlayer(i);
+            }
+        }
+    }
 }
 
 SetupClassRestrictions() {
@@ -563,7 +583,7 @@ public Action:TimerClassChange(Handle:timer, any:client)
 {
     g_hClassChangeTimer = INVALID_HANDLE;
     SetupClassRestrictions();
-    AssignPlayerClasses();
+    ApplyReroll();
     PrintToChatAll("%s", "Mid Round Class Change!");
     PrintStatus();
     return Plugin_Stop;

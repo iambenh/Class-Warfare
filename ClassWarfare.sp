@@ -562,7 +562,7 @@ AssignBotClasses() {
     }
 }
 
-RandomAllowedClass(exclude = TF_CLASS_UNKNOWN)
+RandomAllowedClass(iTeam, exclude = TF_CLASS_UNKNOWN)
 {
     decl String:sBlacklist[128];
     GetConVarString(g_iClassesThisRound == 2 ? g_hBlacklist2v2 : g_hBlacklist1v1, sBlacklist, sizeof(sBlacklist));
@@ -570,30 +570,32 @@ RandomAllowedClass(exclude = TF_CLASS_UNKNOWN)
     new iClass, tries = 0;
     do {
         iClass = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
-    } while (iClass == exclude || (tries++ < 100 && StrContains(sBlacklist, ClassNames[iClass], false) != -1));
+        tries++;
+    } while (iClass == exclude
+        || (tries < 100 && StrContains(sBlacklist, ClassNames[iClass], false) != -1)
+        || (tries < 50 && g_hLimits[iTeam][iClass] < 0.0));
     return iClass;
 }
 
 SetupClassRestrictions() {
 
+    g_iClassesThisRound = GetConVarInt(g_hClassesPerTeam);
+
+    g_iBlueClass1 = RandomAllowedClass(TF_TEAM_BLU);
+    g_iRedClass1 = RandomAllowedClass(TF_TEAM_RED);
+
+    if (g_iClassesThisRound == 2) {
+        g_iBlueClass2 = RandomAllowedClass(TF_TEAM_BLU, g_iBlueClass1);
+        g_iRedClass2 = RandomAllowedClass(TF_TEAM_RED, g_iRedClass1);
+    } else {
+        g_iBlueClass2 = g_iBlueClass1;
+        g_iRedClass2 = g_iRedClass1;
+    }
+
     for(new i = TF_CLASS_SCOUT; i <= TF_CLASS_ENGINEER; i++)
     {
         g_hLimits[TF_TEAM_BLU][i] = 0.0;
         g_hLimits[TF_TEAM_RED][i] = 0.0;
-    }
-    
- 
-    g_iClassesThisRound = GetConVarInt(g_hClassesPerTeam);
-
-    g_iBlueClass1 = RandomAllowedClass();
-    g_iRedClass1 = RandomAllowedClass();
-
-    if (g_iClassesThisRound == 2) {
-        g_iBlueClass2 = RandomAllowedClass(g_iBlueClass1);
-        g_iRedClass2 = RandomAllowedClass(g_iRedClass1);
-    } else {
-        g_iBlueClass2 = g_iBlueClass1;
-        g_iRedClass2 = g_iRedClass1;
     }
 
     g_hLimits[TF_TEAM_BLU][g_iBlueClass1] = -1.0;

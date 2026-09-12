@@ -44,6 +44,9 @@ new Handle:g_hBlacklist1v1;
 new Handle:g_hBlacklist2v2;
 new Handle:g_hBannedPairs;
 new Handle:g_hAvoidRepeats;
+new Handle:g_hUnseenWeight;
+
+new g_iRollsSinceSeen[10];
 
 new bool:g_bVotedReroll[MAXPLAYERS + 1];
 new g_iVotedMode[MAXPLAYERS + 1];
@@ -85,6 +88,7 @@ public OnPluginStart()
     g_hBlacklist2v2                           = CreateConVar("sm_classwarfare_blacklist_2v2", "",   "Classes banned in 2v2");
     g_hBannedPairs                            = CreateConVar("sm_classwarfare_banned_pairs",  "",   "Banned pairings, for example \"Engineer:Spy,Medic:Soldier\"");
     g_hAvoidRepeats                           = CreateConVar("sm_classwarfare_avoid_repeats", "2",  "Avoid repeating classes. 1 = a team can't get its own previous class, 2 = neither team can get any class either team had", _, true, 0.0, true, 2.0);
+    g_hUnseenWeight                           = CreateConVar("sm_classwarfare_unseen_weight", "1.0", "Extra pick chance per round a class isn't chosen", _, true, 0.0);
     AutoExecConfig(true, "classwarfare");
 
     HookEvent("player_changeclass", Event_PlayerClass);
@@ -574,13 +578,31 @@ RandomAllowedClass(iTeam, exclude = TF_CLASS_UNKNOWN, opponent1 = TF_CLASS_UNKNO
 
     new iClass, tries = 0;
     do {
-        iClass = Math_GetRandomInt(TF_CLASS_SCOUT, TF_CLASS_ENGINEER);
+        iClass = WeightedRandomClass();
         tries++;
     } while (iClass == exclude
         || (tries < 100 && StrContains(sBlacklist, ClassNames[iClass], false) != -1)
         || (tries < 100 && (IsBannedPair(sPairs, iClass, opponent1) || IsBannedPair(sPairs, iClass, opponent2)))
         || (tries < 50 && WasRolledLastTime(iTeam, iClass)));
     return iClass;
+}
+
+WeightedRandomClass()
+{
+    new Float:flPerRoll = GetConVarFloat(g_hUnseenWeight);
+    new Float:flTotal = 0.0;
+    for (new i = TF_CLASS_SCOUT; i <= TF_CLASS_ENGINEER; i++) {
+        flTotal += 1.0 + flPerRoll * float(g_iRollsSinceSeen[i]);
+    }
+
+    new Float:flPick = GetURandomFloat() * flTotal;
+    for (new i = TF_CLASS_SCOUT; i <= TF_CLASS_ENGINEER; i++) {
+        flPick -= 1.0 + flPerRoll * float(g_iRollsSinceSeen[i]);
+        if (flPick < 0.0) {
+            return i;
+        }
+    }
+    return TF_CLASS_ENGINEER;
 }
 
 bool:WasRolledLastTime(iTeam, iClass)
@@ -628,6 +650,14 @@ SetupClassRestrictions() {
 
     g_hLimits[TF_TEAM_BLU][g_iBlueClass2] = -1.0;
     g_hLimits[TF_TEAM_RED][g_iRedClass2] = -1.0;
+
+    for (new i = TF_CLASS_SCOUT; i <= TF_CLASS_ENGINEER; i++) {
+        g_iRollsSinceSeen[i]++;
+    }
+    g_iRollsSinceSeen[g_iBlueClass1] = 0;
+    g_iRollsSinceSeen[g_iBlueClass2] = 0;
+    g_iRollsSinceSeen[g_iRedClass1] = 0;
+    g_iRollsSinceSeen[g_iRedClass2] = 0;
 
     if (g_hClassChangeTimer != INVALID_HANDLE) {
         KillTimer(g_hClassChangeTimer);

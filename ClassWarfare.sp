@@ -102,6 +102,8 @@ public OnPluginStart()
     AddCommandListener(Command_JoinClass, "joinclass");
     RegConsoleCmd("say", Command_Say);
     RegConsoleCmd("sm_cw_reroll", Command_CwReroll, "Vote to reroll classes");
+    RegConsoleCmd("sm_reroll", Command_CwReroll, "Vote to reroll classes");
+    RegConsoleCmd("sm_nextclass", Command_CwReroll, "Vote to reroll classes");
     RegConsoleCmd("sm_cw_modevote", Command_ModeVote, "Vote to change class count per team");
     RegConsoleCmd("sm_1v1", Command_Vote1v1, "Vote for 1v1 next round");
     RegConsoleCmd("sm_2v2", Command_Vote2v2, "Vote for 2v2 next round");
@@ -310,7 +312,7 @@ CastRerollVote(client)
     }
     new needed = VotesNeeded();
 
-    PrintToChatAll("\x01\x04[SM]\x01 %N wants to reroll the classes (%d/%d votes, type !cw_reroll)", client, votes, needed);
+    PrintToChatAll("\x01\x04[SM]\x01 %N wants to reroll the classes (%d/%d votes, type !reroll)", client, votes, needed);
 
     if (votes >= needed) {
         DelayPublicVoteTriggering(true);
